@@ -1,6 +1,23 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import type { RivenSellQueueItem } from "../types/market";
+import {
+  formatRivenCopy,
+  formatRivenSingle,
+  formatRivenBatch,
+  getFittingBatch,
+  DEFAULT_DIRECT_TPL,
+  DEFAULT_AUCTION_TPL,
+  DEFAULT_ICON,
+  DEFAULT_BATCH_PREFIX,
+  DEFAULT_BATCH_SUFFIX,
+  DEFAULT_BATCH_SEP,
+  type RivenBatchMode,
+  type RivenBatchConfig,
+} from "./rivenSellFormat";
 import "./RivenSellSidebar.css";
+
+// Re-export for backwards compatibility
+export { formatRivenCopy };
 
 interface Props {
   open: boolean;
@@ -13,28 +30,8 @@ interface Props {
   onClear: () => void;
 }
 
-const DEFAULT_DIRECT_TPL = "WTS {icon} {item} {price} {icon}";
-const DEFAULT_AUCTION_TPL = "WTS {icon} {item} PMO >{price} {icon}";
-const DEFAULT_ICON = ":platinum:";
-
 const ICON_PRESETS = [":platinum:", ":fire:", "★", "⚡", "::"];
-
-export function formatRivenCopy(
-  item: RivenSellQueueItem,
-  directTpl: string,
-  auctionTpl: string,
-  icon: string
-): string {
-  const tpl = item.mode === "auction" ? auctionTpl : directTpl;
-  const itemToken = `[${item.weaponName} ${item.modName}]`.trim();
-  const priceToken = `${item.price}p`;
-
-  return tpl
-    .replace(/\{item\}/gi, itemToken)
-    .replace(/\{price\}/gi, priceToken)
-    .replace(/\{icon\}/gi, icon)
-    .trim();
-}
+const SEP_PRESETS = [" | ", ", ", " - ", " / "];
 
 export default function RivenSellSidebar({
   open,
@@ -46,14 +43,38 @@ export default function RivenSellSidebar({
   onRemoveItem,
   onClear,
 }: Props) {
-  const [directTpl, setDirectTpl] = useState(() => localStorage.getItem("ff_riven_direct_tpl") ?? DEFAULT_DIRECT_TPL);
-  const [auctionTpl, setAuctionTpl] = useState(() => localStorage.getItem("ff_riven_auction_tpl") ?? DEFAULT_AUCTION_TPL);
-  const [icon, setIcon] = useState(() => localStorage.getItem("ff_riven_icon") ?? DEFAULT_ICON);
+  const [batchMode, setBatchMode] = useState<RivenBatchMode>(
+    () => (localStorage.getItem("ff_riven_batch_mode") as RivenBatchMode) ?? "grouped"
+  );
+  const [batchPrefix, setBatchPrefix] = useState(
+    () => localStorage.getItem("ff_riven_batch_prefix") ?? DEFAULT_BATCH_PREFIX
+  );
+  const [batchSuffix, setBatchSuffix] = useState(
+    () => localStorage.getItem("ff_riven_batch_suffix") ?? DEFAULT_BATCH_SUFFIX
+  );
+  const [batchSep, setBatchSep] = useState(
+    () => localStorage.getItem("ff_riven_batch_sep") ?? DEFAULT_BATCH_SEP
+  );
+  const [directTpl, setDirectTpl] = useState(
+    () => localStorage.getItem("ff_riven_direct_tpl") ?? DEFAULT_DIRECT_TPL
+  );
+  const [auctionTpl, setAuctionTpl] = useState(
+    () => localStorage.getItem("ff_riven_auction_tpl") ?? DEFAULT_AUCTION_TPL
+  );
+  const [icon, setIcon] = useState(
+    () => localStorage.getItem("ff_riven_icon") ?? DEFAULT_ICON
+  );
+
   const [showConfig, setShowConfig] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [allCopied, setAllCopied] = useState(false);
+  const [fitCopied, setFitCopied] = useState(false);
 
   // Persistence
+  useEffect(() => { localStorage.setItem("ff_riven_batch_mode", batchMode); }, [batchMode]);
+  useEffect(() => { localStorage.setItem("ff_riven_batch_prefix", batchPrefix); }, [batchPrefix]);
+  useEffect(() => { localStorage.setItem("ff_riven_batch_suffix", batchSuffix); }, [batchSuffix]);
+  useEffect(() => { localStorage.setItem("ff_riven_batch_sep", batchSep); }, [batchSep]);
   useEffect(() => { localStorage.setItem("ff_riven_direct_tpl", directTpl); }, [directTpl]);
   useEffect(() => { localStorage.setItem("ff_riven_auction_tpl", auctionTpl); }, [auctionTpl]);
   useEffect(() => { localStorage.setItem("ff_riven_icon", icon); }, [icon]);
@@ -72,7 +93,7 @@ export default function RivenSellSidebar({
     const onMouseMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
       const delta = startXRef.current - ev.clientX;
-      const newW = Math.max(220, Math.min(520, startWRef.current + delta));
+      const newW = Math.max(220, Math.min(540, startWRef.current + delta));
       onWidthChange(newW);
     };
 
@@ -86,25 +107,44 @@ export default function RivenSellSidebar({
     window.addEventListener("mouseup", onMouseUp);
   };
 
+  const batchConfig: RivenBatchConfig = useMemo(() => ({
+    mode: batchMode,
+    directTpl,
+    auctionTpl,
+    icon,
+    batchPrefix,
+    batchSuffix,
+    batchSep,
+  }), [batchMode, directTpl, auctionTpl, icon, batchPrefix, batchSuffix, batchSep]);
+
+  const allText = useMemo(() => formatRivenBatch(items, batchConfig), [items, batchConfig]);
+  const charCount = allText.length;
+  const isOverLimit = charCount > 180;
+  const fitting = useMemo(() => getFittingBatch(items, batchConfig, 180), [items, batchConfig]);
+
   if (!open) return null;
 
   const copySingle = (item: RivenSellQueueItem) => {
-    const text = formatRivenCopy(item, directTpl, auctionTpl, icon);
+    const text = formatRivenSingle(item, directTpl, auctionTpl, icon);
     navigator.clipboard.writeText(text).then(() => {
       setCopiedId(item.id);
       setTimeout(() => setCopiedId(null), 1500);
     }).catch(() => {});
   };
 
-  const allText = items.map(it => formatRivenCopy(it, directTpl, auctionTpl, icon)).join(" ");
-  const charCount = allText.length;
-  const isOverLimit = charCount > 180;
-
   const copyAll = () => {
     if (!allText) return;
     navigator.clipboard.writeText(allText).then(() => {
       setAllCopied(true);
       setTimeout(() => setAllCopied(false), 1500);
+    }).catch(() => {});
+  };
+
+  const copyFitting = () => {
+    if (!fitting.text) return;
+    navigator.clipboard.writeText(fitting.text).then(() => {
+      setFitCopied(true);
+      setTimeout(() => setFitCopied(false), 1500);
     }).catch(() => {});
   };
 
@@ -135,6 +175,78 @@ export default function RivenSellSidebar({
         {/* Collapsible Template Settings */}
         {showConfig && (
           <div className="rss-config-panel">
+            {/* Batch mode selector */}
+            <div className="rss-config-row">
+              <span className="rss-config-label">Batch Format Mode</span>
+              <div className="rss-mode-pills">
+                <button
+                  type="button"
+                  className={`rss-mode-pill-btn${batchMode === "grouped" ? " active" : ""}`}
+                  onClick={() => setBatchMode("grouped")}
+                  title="Single WTS header + delimiter (saves chat characters)"
+                >
+                  Grouped (Compact)
+                </button>
+                <button
+                  type="button"
+                  className={`rss-mode-pill-btn${batchMode === "separate" ? " active" : ""}`}
+                  onClick={() => setBatchMode("separate")}
+                  title="Repeat full template per item"
+                >
+                  Individual
+                </button>
+              </div>
+            </div>
+
+            {/* Grouped mode settings */}
+            {batchMode === "grouped" && (
+              <>
+                <div className="rss-config-row">
+                  <span className="rss-config-label">Grouped Header ({`{icon}`})</span>
+                  <input
+                    className="rss-config-input"
+                    value={batchPrefix}
+                    onChange={e => setBatchPrefix(e.target.value)}
+                    placeholder="WTS {icon}"
+                  />
+                </div>
+
+                <div className="rss-config-row">
+                  <span className="rss-config-label">Item Separator</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      className="rss-config-input"
+                      style={{ width: 70 }}
+                      value={batchSep}
+                      onChange={e => setBatchSep(e.target.value)}
+                    />
+                    <div className="rss-icon-presets">
+                      {SEP_PRESETS.map(s => (
+                        <button
+                          key={s}
+                          type="button"
+                          className="rss-icon-chip"
+                          onClick={() => setBatchSep(s)}
+                        >
+                          &quot;{s.trim()}&quot;
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rss-config-row">
+                  <span className="rss-config-label">Grouped Suffix ({`{icon}`})</span>
+                  <input
+                    className="rss-config-input"
+                    value={batchSuffix}
+                    onChange={e => setBatchSuffix(e.target.value)}
+                    placeholder="{icon}"
+                  />
+                </div>
+              </>
+            )}
+
             <div className="rss-config-row">
               <span className="rss-config-label">Direct Sale Template</span>
               <input
@@ -166,7 +278,7 @@ export default function RivenSellSidebar({
                 />
                 <div className="rss-icon-presets">
                   {ICON_PRESETS.map(p => (
-                    <button key={p} className="rss-icon-chip" onClick={() => setIcon(p)}>
+                    <button key={p} type="button" className="rss-icon-chip" onClick={() => setIcon(p)}>
                       {p}
                     </button>
                   ))}
@@ -186,7 +298,7 @@ export default function RivenSellSidebar({
             </div>
           ) : (
             items.map(item => {
-              const previewText = formatRivenCopy(item, directTpl, auctionTpl, icon);
+              const previewText = formatRivenSingle(item, directTpl, auctionTpl, icon);
               const isCopied = copiedId === item.id;
               return (
                 <div key={item.id} className="rss-item-card">
@@ -225,7 +337,7 @@ export default function RivenSellSidebar({
                     <button
                       className={`rss-copy-btn${isCopied ? " copied" : ""}`}
                       onClick={() => copySingle(item)}
-                      title="Copy to clipboard"
+                      title="Copy single item to clipboard"
                     >
                       {isCopied ? "✓ Copied" : "Copy"}
                     </button>
@@ -240,21 +352,42 @@ export default function RivenSellSidebar({
         {items.length > 0 && (
           <div className="rss-footer">
             <div className="rss-char-counter">
-              <span>Trade Chat limit:</span>
+              <span>Trade Chat limit ({batchMode}):</span>
               <span className={isOverLimit ? "rss-char-warning" : ""}>
-                {charCount} / 180 chars {isOverLimit && "(Too long!)"}
+                {charCount} / 180 chars {isOverLimit && `(+${charCount - 180} over!)`}
               </span>
             </div>
 
             <div className="rss-batch-btns">
-              <button
-                className={`rss-btn-copy-all${allCopied ? " copied" : ""}`}
-                onClick={copyAll}
-                disabled={items.length === 0}
-                title="Copy combined message to clipboard"
-              >
-                {allCopied ? "✓ All Copied!" : "Copy All"}
-              </button>
+              {isOverLimit ? (
+                <>
+                  <button
+                    className={`rss-btn-copy-fit${fitCopied ? " copied" : ""}`}
+                    onClick={copyFitting}
+                    disabled={fitting.count === 0}
+                    title={`Copy first ${fitting.count} rivens that fit under 180 characters (${fitting.text.length} chars)`}
+                  >
+                    {fitCopied ? `✓ Copied (${fitting.count})` : `Copy Fit (${fitting.count}/${items.length})`}
+                  </button>
+                  <button
+                    className={`rss-btn-copy-all warning-mode${allCopied ? " copied" : ""}`}
+                    onClick={copyAll}
+                    title="Copy all rivens anyway (exceeds chat limit)"
+                  >
+                    {allCopied ? "✓ All Copied" : "Copy All"}
+                  </button>
+                </>
+              ) : (
+                <button
+                  className={`rss-btn-copy-all${allCopied ? " copied" : ""}`}
+                  onClick={copyAll}
+                  disabled={items.length === 0}
+                  title="Copy combined message to clipboard"
+                >
+                  {allCopied ? "✓ All Copied!" : "Copy All"}
+                </button>
+              )}
+
               <button className="rss-btn-clear" onClick={onClear} title="Clear all queued rivens">
                 Clear
               </button>
