@@ -37,6 +37,45 @@ interface Props {
 
 function fmt(n: number) { return n.toLocaleString(); }
 
+function EyeIcon({ visible, size = 12 }: { visible: boolean; size?: number }) {
+  if (visible) {
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ display: "block" }}
+      >
+        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: "block" }}
+    >
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  );
+}
+
 /** Debug helpers available from the browser console:
  *  window.__wfmDump('/v2/orders/my')   — raw JSON from any authenticated WFM endpoint
  *  window.__wfmAttrs()                  — list all valid riven attribute url_names
@@ -272,6 +311,7 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
   const [auctions, setAuctions] = useState<WfmAuction[]>([]);
   const [busy, setBusy] = useState(false);
   const [editingAuction, setEditingAuction] = useState<WfmAuction | null>(null);
+  const [selectedRivenIds, setSelectedRivenIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -285,6 +325,31 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
 
   useEffect(() => { load(); }, [load, auctionRefreshKey]);
 
+  const toggleSelectRiven = (id: string) => {
+    setSelectedRivenIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allRivenItemIds = useMemo(() => [
+    ...rivenOrders.map(o => o.id),
+    ...auctions.map(a => a.id),
+  ], [rivenOrders, auctions]);
+
+  const allRivensSelected = allRivenItemIds.length > 0 && allRivenItemIds.every(id => selectedRivenIds.has(id));
+  const someRivensSelected = allRivenItemIds.some(id => selectedRivenIds.has(id));
+
+  const toggleSelectAllRivens = () => {
+    if (allRivensSelected) {
+      setSelectedRivenIds(new Set());
+    } else {
+      setSelectedRivenIds(new Set(allRivenItemIds));
+    }
+  };
+
   const toggleAuctionVisible = (id: string, currentlyVisible: boolean) => {
     invoke("wfm_set_auction_visible", { auctionId: id, visible: !currentlyVisible } satisfies WfmSetAuctionVisibleArgs)
       .then(() => load())
@@ -292,9 +357,25 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
   };
 
   const deleteAuction = (id: string) => {
+    setSelectedRivenIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     invoke("wfm_delete_auction", { auctionId: id })
       .then(() => load())
       .catch((e: unknown) => alert(String(e)));
+  };
+
+  const handleDeleteOrder = (id: string) => {
+    setSelectedRivenIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    onDeleteOrder(id);
   };
 
   const setAllAuctionsVisible = async (visible: boolean) => {
@@ -305,7 +386,54 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
   };
 
   const setAllVisible = async (vis: boolean) => {
-    await Promise.all([onBulkOrdersVisible(vis), setAllAuctionsVisible(vis)]);
+    setBusy(true);
+    try {
+      await Promise.all([onBulkOrdersVisible(vis), setAllAuctionsVisible(vis)]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setSelectedRivensVisible = async (vis: boolean) => {
+    if (selectedRivenIds.size === 0) return;
+    setBusy(true);
+    try {
+      const selectedOrders = rivenOrders.filter(o => selectedRivenIds.has(o.id));
+      const selectedAuctions = auctions.filter(a => selectedRivenIds.has(a.id));
+      await Promise.all([
+        ...selectedOrders.map(o =>
+          invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: vis } satisfies WfmUpdateOrderArgs).catch(() => {})
+        ),
+        ...selectedAuctions.map(a =>
+          invoke("wfm_set_auction_visible", { auctionId: a.id, visible: vis } satisfies WfmSetAuctionVisibleArgs).catch(() => {})
+        ),
+      ]);
+    } finally {
+      setBusy(false);
+      setSelectedRivenIds(new Set());
+      load();
+    }
+  };
+
+  const toggleSelectedRivensVisible = async () => {
+    if (selectedRivenIds.size === 0) return;
+    setBusy(true);
+    try {
+      const selectedOrders = rivenOrders.filter(o => selectedRivenIds.has(o.id));
+      const selectedAuctions = auctions.filter(a => selectedRivenIds.has(a.id));
+      await Promise.all([
+        ...selectedOrders.map(o =>
+          invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: !o.visible } satisfies WfmUpdateOrderArgs).catch(() => {})
+        ),
+        ...selectedAuctions.map(a =>
+          invoke("wfm_set_auction_visible", { auctionId: a.id, visible: !a.visible } satisfies WfmSetAuctionVisibleArgs).catch(() => {})
+        ),
+      ]);
+    } finally {
+      setBusy(false);
+      setSelectedRivenIds(new Set());
+      load();
+    }
   };
 
   const saveAuctionEdit = async (id: string, start: number, buyout: number | null, visible: boolean, newIsDirect: boolean) => {
@@ -340,12 +468,65 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
   return (
     <div style={{ marginTop: 16 }}>
       <div className="wfm-section-label wfm-section-label-row">
+        {totalCount > 0 && (
+          <label className="wfm-select-all-wrap" title="Select / deselect all rivens">
+            <input
+              type="checkbox"
+              className="wfm-order-checkbox"
+              checked={allRivensSelected}
+              ref={el => {
+                if (el) el.indeterminate = !allRivensSelected && someRivensSelected;
+              }}
+              onChange={toggleSelectAllRivens}
+            />
+          </label>
+        )}
         <span>Rivens ({totalCount})</span>
         <button className="wfm-refresh-btn" onClick={load} title="Refresh" disabled={busy}>↻</button>
-        {totalCount > 0 && <>
-          <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllVisible(true)} title="Set all rivens visible">Vis All</button>
-          <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllVisible(false)} title="Set all rivens hidden">Hide All</button>
-        </>}
+        {selectedRivenIds.size > 0 ? (
+          <>
+            <span className="wfm-bulk-count">{selectedRivenIds.size} selected</span>
+            <button
+              className="wfm-bulk-btn"
+              onClick={toggleSelectedRivensVisible}
+              disabled={busy}
+              title="Toggle visibility of selected rivens"
+            >
+              {busy ? "Updating…" : `Toggle (${selectedRivenIds.size})`}
+            </button>
+            <button
+              className="wfm-bulk-btn wfm-bulk-show"
+              onClick={() => setSelectedRivensVisible(true)}
+              disabled={busy}
+              title="Set selected rivens visible"
+            >
+              Vis ({selectedRivenIds.size})
+            </button>
+            <button
+              className="wfm-bulk-btn wfm-bulk-hide"
+              onClick={() => setSelectedRivensVisible(false)}
+              disabled={busy}
+              title="Set selected rivens hidden"
+            >
+              Hide ({selectedRivenIds.size})
+            </button>
+            <button
+              className="wfm-bulk-btn"
+              onClick={() => setSelectedRivenIds(new Set())}
+              disabled={busy}
+              title="Deselect all"
+            >
+              Clear
+            </button>
+          </>
+        ) : (
+          totalCount > 0 && (
+            <>
+              <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllVisible(true)} disabled={busy} title="Set all rivens visible">Vis All</button>
+              <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllVisible(false)} disabled={busy} title="Set all rivens hidden">Hide All</button>
+            </>
+          )
+        )}
       </div>
       {busy && totalCount === 0 ? (
         <div className="wfm-empty">Loading…</div>
@@ -355,18 +536,25 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
         <div className="wfm-orders">
           {rivenOrders.map(o => (
             <div key={o.id} className={`wfm-order-row${o.visible ? "" : " wfm-order-hidden"}`}>
-              <button
-                className="wfm-vis-btn"
-                title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
-                onClick={() => onToggleOrderVisible(o)}>
-                {o.visible ? "👁" : "🚫"}
-              </button>
+              <input
+                type="checkbox"
+                className="wfm-order-checkbox"
+                checked={selectedRivenIds.has(o.id)}
+                onChange={() => toggleSelectRiven(o.id)}
+                title="Select riven listing"
+              />
               <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
               <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
               <span className="wfm-order-price">{fmt(o.platinum)}p</span>
               <span className="wfm-order-qty">×{o.quantity}</span>
+              <button
+                className={`wfm-btn-sm wfm-vis-btn${o.visible ? "" : " hidden"}`}
+                title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
+                onClick={() => onToggleOrderVisible(o)}>
+                <EyeIcon visible={o.visible} />
+              </button>
               <button className="wfm-btn-sm" onClick={() => onEditOrder(o)}>Edit</button>
-              <button className="wfm-btn-sm wfm-btn-del" onClick={() => onDeleteOrder(o.id)}>✕</button>
+              <button className="wfm-btn-sm wfm-btn-del" onClick={() => handleDeleteOrder(o.id)}>✕</button>
             </div>
           ))}
           {auctions.map(a => {
@@ -374,12 +562,13 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
             const modName = a.item.name ? a.item.name.charAt(0).toUpperCase() + a.item.name.slice(1) : "";
             return (
               <div key={a.id} className={`wfm-order-row${a.visible ? "" : " wfm-order-hidden"}`}>
-                <button
-                  className="wfm-vis-btn"
-                  title={a.visible ? "Visible — click to hide" : "Hidden — click to show"}
-                  onClick={() => toggleAuctionVisible(a.id, a.visible)}>
-                  {a.visible ? "👁" : "🚫"}
-                </button>
+                <input
+                  type="checkbox"
+                  className="wfm-order-checkbox"
+                  checked={selectedRivenIds.has(a.id)}
+                  onChange={() => toggleSelectRiven(a.id)}
+                  title="Select riven auction"
+                />
                 <span className={`wfm-order-type ${a.is_direct_sell ? "direct" : "auction"}`}>
                   {a.is_direct_sell ? "DIR" : "AUC"}
                 </span>
@@ -399,6 +588,12 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
                     {a.bids ?? 0} {(a.bids ?? 0) === 1 ? "bid" : "bids"}
                   </span>
                 )}
+                <button
+                  className={`wfm-btn-sm wfm-vis-btn${a.visible ? "" : " hidden"}`}
+                  title={a.visible ? "Visible — click to hide" : "Hidden — click to show"}
+                  onClick={() => toggleAuctionVisible(a.id, a.visible)}>
+                  <EyeIcon visible={a.visible} />
+                </button>
                 <button className="wfm-btn-sm" onClick={() => openAuctionEdit(a)}>Edit</button>
                 <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteAuction(a.id)}>✕</button>
               </div>
@@ -425,6 +620,8 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
 }) {
   const [orders, setOrders] = useState<{ sell: WfmManagedOrder[]; buy: WfmManagedOrder[] }>({ sell: [], buy: [] });
   const [loading, setLoading] = useState(true);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [search, setSearch]   = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "sell" | "buy">("all");
   const [minPlat, setMinPlat] = useState<string>("");
@@ -452,8 +649,23 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
   useEffect(() => { loadOrders(); }, [loadOrders]);
 
   const deleteOrder = async (id: string) => {
+    setSelectedOrderIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     await invokeWfm("wfm_delete_order", { orderId: id }).catch(() => {});
     loadOrders();
+  };
+
+  const toggleSelectOrder = (id: string) => {
+    setSelectedOrderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const toggleOrderVisible = async (o: WfmManagedOrder) => {
@@ -559,11 +771,58 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
     return list;
   }, [rivenOrders, typeFilter, q, minP, maxP, sortBy, itemIdMap]);
 
+  const allVisibleOrdersSelected = visibleOrders.length > 0 && visibleOrders.every(o => selectedOrderIds.has(o.id));
+  const someVisibleOrdersSelected = visibleOrders.some(o => selectedOrderIds.has(o.id));
+
+  const toggleSelectAllOrders = () => {
+    if (allVisibleOrdersSelected) {
+      setSelectedOrderIds(prev => {
+        const next = new Set(prev);
+        visibleOrders.forEach(o => next.delete(o.id));
+        return next;
+      });
+    } else {
+      setSelectedOrderIds(prev => {
+        const next = new Set(prev);
+        visibleOrders.forEach(o => next.add(o.id));
+        return next;
+      });
+    }
+  };
+
   const setAllOrdersVisible = async (vis: boolean) => {
+    setBatchBusy(true);
     const target = hasFilter ? visibleOrders : [...orders.sell, ...orders.buy];
     await Promise.all(target.map(o =>
       invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: vis } satisfies WfmUpdateOrderArgs).catch(() => {})
     ));
+    setBatchBusy(false);
+    loadOrders();
+  };
+
+  const setSelectedOrdersVisible = async (vis: boolean) => {
+    if (selectedOrderIds.size === 0) return;
+    setBatchBusy(true);
+    const all = [...orders.sell, ...orders.buy];
+    const target = all.filter(o => selectedOrderIds.has(o.id));
+    await Promise.all(target.map(o =>
+      invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: vis } satisfies WfmUpdateOrderArgs).catch(() => {})
+    ));
+    setBatchBusy(false);
+    setSelectedOrderIds(new Set());
+    loadOrders();
+  };
+
+  const toggleSelectedOrdersVisible = async () => {
+    if (selectedOrderIds.size === 0) return;
+    setBatchBusy(true);
+    const all = [...orders.sell, ...orders.buy];
+    const target = all.filter(o => selectedOrderIds.has(o.id));
+    await Promise.all(target.map(o =>
+      invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: !o.visible } satisfies WfmUpdateOrderArgs).catch(() => {})
+    ));
+    setBatchBusy(false);
+    setSelectedOrderIds(new Set());
     loadOrders();
   };
 
@@ -578,12 +837,79 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
   return (
     <div className="wfm-panel">
       <div className="wfm-section-label wfm-section-label-row">
+        {visibleOrders.length > 0 && (
+          <label className="wfm-select-all-wrap" title="Select / deselect all visible listings">
+            <input
+              type="checkbox"
+              className="wfm-order-checkbox"
+              checked={allVisibleOrdersSelected}
+              ref={el => {
+                if (el) el.indeterminate = !allVisibleOrdersSelected && someVisibleOrdersSelected;
+              }}
+              onChange={toggleSelectAllOrders}
+            />
+          </label>
+        )}
         <span>Active Listings ({visibleOrders.length}{visibleOrders.length !== nonRivenOrders.length ? ` / ${nonRivenOrders.length}` : ""})</span>
-        <button className="wfm-refresh-btn" onClick={loadOrders} title="Refresh">↻</button>
-        {visibleOrders.length > 0 && <>
-          <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllOrdersVisible(true)} title="Set listings visible">Vis All</button>
-          <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllOrdersVisible(false)} title="Set listings hidden">Hide All</button>
-        </>}
+        <button className="wfm-refresh-btn" onClick={loadOrders} title="Refresh" disabled={batchBusy || loading}>↻</button>
+        {selectedOrderIds.size > 0 ? (
+          <>
+            <span className="wfm-bulk-count">{selectedOrderIds.size} selected</span>
+            <button
+              className="wfm-bulk-btn"
+              onClick={toggleSelectedOrdersVisible}
+              disabled={batchBusy}
+              title="Toggle visibility of selected listings"
+            >
+              {batchBusy ? "Updating…" : `Toggle (${selectedOrderIds.size})`}
+            </button>
+            <button
+              className="wfm-bulk-btn wfm-bulk-show"
+              onClick={() => setSelectedOrdersVisible(true)}
+              disabled={batchBusy}
+              title="Set selected listings visible"
+            >
+              Vis ({selectedOrderIds.size})
+            </button>
+            <button
+              className="wfm-bulk-btn wfm-bulk-hide"
+              onClick={() => setSelectedOrdersVisible(false)}
+              disabled={batchBusy}
+              title="Set selected listings hidden"
+            >
+              Hide ({selectedOrderIds.size})
+            </button>
+            <button
+              className="wfm-bulk-btn"
+              onClick={() => setSelectedOrderIds(new Set())}
+              disabled={batchBusy}
+              title="Deselect all"
+            >
+              Clear
+            </button>
+          </>
+        ) : (
+          visibleOrders.length > 0 && (
+            <>
+              <button
+                className="wfm-bulk-btn wfm-bulk-show"
+                onClick={() => setAllOrdersVisible(true)}
+                disabled={batchBusy}
+                title="Set listings visible"
+              >
+                Vis All
+              </button>
+              <button
+                className="wfm-bulk-btn wfm-bulk-hide"
+                onClick={() => setAllOrdersVisible(false)}
+                disabled={batchBusy}
+                title="Set listings hidden"
+              >
+                Hide All
+              </button>
+            </>
+          )
+        )}
       </div>
       <div className="wfm-listings-hint">To post a new listing, click any set in the Prime Sets tab.</div>
 
@@ -680,16 +1006,23 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
        <div className="wfm-orders">
          {visibleOrders.map(o => (
            <div key={o.id} className={`wfm-order-row${o.visible ? "" : " wfm-order-hidden"}`}>
-             <button
-               className="wfm-vis-btn"
-               title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
-               onClick={() => toggleOrderVisible(o)}>
-               {o.visible ? "👁" : "🚫"}
-             </button>
+             <input
+               type="checkbox"
+               className="wfm-order-checkbox"
+               checked={selectedOrderIds.has(o.id)}
+               onChange={() => toggleSelectOrder(o.id)}
+               title="Select listing"
+             />
              <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
              <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
              <span className="wfm-order-price">{fmt(o.platinum)}p</span>
              <span className="wfm-order-qty">×{o.quantity}</span>
+             <button
+               className={`wfm-btn-sm wfm-vis-btn${o.visible ? "" : " hidden"}`}
+               title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
+               onClick={() => toggleOrderVisible(o)}>
+               <EyeIcon visible={o.visible} />
+             </button>
              <button className="wfm-btn-sm" onClick={() => startEdit(o)}>Edit</button>
              <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteOrder(o.id)}>✕</button>
            </div>
