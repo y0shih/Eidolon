@@ -307,10 +307,41 @@
   font-weight: 600;
 }
 
+/* Batch Mode Selector */
+.rss-mode-pills {
+  display: flex;
+  gap: 4px;
+}
+
+.rss-mode-pill-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: all 0.1s;
+  text-align: center;
+}
+
+.rss-mode-pill-btn.active {
+  background: rgba(56, 139, 253, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.rss-mode-pill-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
 .rss-batch-btns {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .rss-btn-copy-all {
@@ -318,9 +349,9 @@
   background: var(--accent);
   border: 1px solid var(--accent);
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 6px 12px;
+  padding: 6px 10px;
   border-radius: 5px;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -328,6 +359,7 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .rss-btn-copy-all:hover:not(:disabled) {
@@ -344,12 +376,48 @@
   border-color: #2ea043;
 }
 
+.rss-btn-copy-all.warning-mode {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: rgba(248, 81, 73, 0.4);
+  color: var(--red);
+}
+
+.rss-btn-copy-all.warning-mode:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.25);
+}
+
+.rss-btn-copy-fit {
+  flex: 1.2;
+  background: #238636;
+  border: 1px solid #2ea043;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.rss-btn-copy-fit:hover {
+  opacity: 0.9;
+}
+
+.rss-btn-copy-fit.copied {
+  background: #2ea043;
+}
+
 .rss-btn-clear {
   background: none;
   border: 1px solid var(--border);
   color: var(--muted);
   font-size: 11px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   border-radius: 5px;
   cursor: pointer;
   transition: all 0.15s;
@@ -359,3 +427,4 @@
   border-color: var(--red);
   color: var(--red);
 }
+
