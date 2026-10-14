@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -119,21 +119,27 @@ pub struct BlobInventory {
     pub content_hash:    u64,
 }
 
+/// Compute a fast 64-bit content hash of a raw JSON blob slice using XXH3.
+/// Returns a non-zero hash (minimum 1, as 0 indicates uncomputed/unknown).
+pub fn compute_raw_blob_hash(raw_json: &[u8]) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(raw_json).max(1)
+}
+
 impl BlobInventory {
-    /// Deterministic hash of everything except `content_hash` itself. Goes through
-    /// `serde_json::Value` (sorted maps) so HashMap iteration order can't change it.
-    /// Returns 0 if serialization fails, which callers treat as "never equal".
+    /// Return the computed content hash. If not already computed (0), computes a fallback
+    /// hash of the serialized struct.
+    #[allow(dead_code)]
     pub fn compute_content_hash(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
+        if self.content_hash != 0 {
+            return self.content_hash;
+        }
         let mut copy = self.clone();
         copy.content_hash = 0;
-        let bytes = match serde_json::to_value(&copy).and_then(|v| serde_json::to_vec(&v)) {
+        let bytes = match serde_json::to_vec(&copy) {
             Ok(b) => b,
             Err(_) => return 0,
         };
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        bytes.hash(&mut h);
-        h.finish().max(1)
+        compute_raw_blob_hash(&bytes)
     }
 }
 
@@ -635,7 +641,8 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         }
     }
 
-    let json_bytes = extract_blob_json(raw)?;
+    let json_bytes = extract_blob_json_ref(raw)?;
+    let content_hash = compute_raw_blob_hash(&json_bytes);
 
     let json: serde_json::Value = serde_json::from_slice(&json_bytes)
         .map_err(|e| {
@@ -869,14 +876,12 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         .map(|o| o.keys().cloned().collect())
         .unwrap_or_default();
 
-    let mut inv = BlobInventory {
+    Some(BlobInventory {
         credits, endo, platinum, free_platinum, mastery_level,
         unique_items, stackable_items, mods,
         flavour_items, weapon_skins, mastery_data, pending_recipes, consumed_suits,
-        rivens, sections, content_hash: 0,
-    };
-    inv.content_hash = inv.compute_content_hash();
-    Some(inv)
+        rivens, sections, content_hash,
+    })
 }
 
 /// Consecutive rejected blobs after which a missing section is accepted as
@@ -1857,6 +1862,27 @@ mod section_baseline_tests {
             .replace("\"RegularCredits\":5", "\"RegularCredits\":6");
         let c = parse_full_account_blob(changed.as_bytes()).unwrap();
         assert_ne!(a.content_hash, c.content_hash);
+    }
+
+    #[test]
+    fn raw_blob_hash_matches_content_hash() {
+        let raw = minimal_account_blob();
+        let inv = parse_full_account_blob(&raw).unwrap();
+        let extracted = super::extract_blob_json_ref(&raw).unwrap();
+        let expected_hash = super::compute_raw_blob_hash(&extracted);
+        assert_eq!(inv.content_hash, expected_hash);
+        assert_ne!(inv.content_hash, 0);
+    }
+
+    #[test]
+    fn compute_content_hash_returns_existing_or_fallback() {
+        let mut inv = parse_full_account_blob(&minimal_account_blob()).unwrap();
+        let expected = inv.content_hash;
+        assert_eq!(inv.compute_content_hash(), expected);
+
+        inv.content_hash = 0;
+        let fallback_hash = inv.compute_content_hash();
+        assert_ne!(fallback_hash, 0);
     }
 
     #[test]
